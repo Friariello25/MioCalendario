@@ -206,13 +206,28 @@ header{background:var(--navy);color:#fff;padding:calc(14px + env(safe-area-inset
     <div class="f"><label>Avvisi predefiniti per i nuovi eventi</label><div class="chips" id="defRem"></div></div>
     <div class="f"><label>Dati</label>
       <div class="btns" style="margin-top:0;flex-wrap:wrap">
+        <button class="btn s" id="imEv">Importa eventi</button>
         <button class="btn s" id="exIcs">Esporta .ics</button>
         <button class="btn s" id="exJson">Backup</button>
         <button class="btn s" id="imJson">Ripristina</button>
       </div>
       <input type="file" id="imFile" accept=".json" style="display:none">
+      <input type="file" id="imEvFile" accept=".ics,.csv,text/calendar,text/csv,text/comma-separated-values,application/vnd.ms-excel" style="display:none">
     </div>
     <div class="btns"><button class="btn p" id="setClose">Chiudi</button></div>
+  </div>
+</div>
+
+<!-- Importa eventi -->
+<div class="sheet-bg" id="impBg">
+  <div class="sheet">
+    <h2>Importa eventi</h2>
+    <div id="impSum" style="font-size:.95rem;margin-bottom:12px"></div>
+    <div class="f"><label class="sw"><input type="checkbox" id="impPast"> Includi anche gli eventi passati</label></div>
+    <div class="f"><label class="sw"><input type="checkbox" id="impNotes"> Includi note e descrizioni</label></div>
+    <div class="f"><label class="sw"><input type="checkbox" id="impNoInv"> Escludi le riunioni con invitati</label></div>
+    <div class="f"><label>Anteprima</label><div id="impList" style="font-size:.85rem;color:var(--mute)"></div></div>
+    <div class="btns"><button class="btn s" id="impNo">Annulla</button><button class="btn p" id="impOk">Importa</button></div>
   </div>
 </div>
 
@@ -340,7 +355,7 @@ function evCard(e){
   if(e.rem&&e.rem.length)tag.push('🔔 '+e.rem.slice().sort((a,b)=>a-b).map(remLabel).join(', '));
   if(e.insist)tag.push('🔁 insistente');
   return `<div class="ev ${e.cat} ${e.done?'done':''} ${past?'past':''}" data-id="${e.id}">
-    <div class="tm">${hm(e.start)}<small>${CATS[e.cat]}</small></div>
+    <div class="tm"${e.allDay?' style="font-size:.78rem;line-height:1.15"':''}>${e.allDay?'Tutto il giorno':hm(e.start)}<small>${CATS[e.cat]}</small></div>
     <div class="bd"><div class="ti">${esc(e.title)}</div>${e.note?`<div class="no">${esc(e.note)}</div>`:''}${tag.length?`<div class="tags">${tag.join(' · ')}</div>`:''}</div>
     <button class="chk" data-chk="${e.id}" aria-label="Fatto">✓</button></div>`}
 
@@ -385,12 +400,12 @@ function render(){
 }
 function renderHero(){
   const now=Date.now();
-  const nx=events.filter(e=>!e.done&&e.start>=now-(e.dur||0)*6e4).sort((a,b)=>a.start-b.start)[0];
+  const nx=events.filter(e=>!e.done&&!e.allDay&&e.start>=now-(e.dur||0)*6e4).sort((a,b)=>a.start-b.start)[0];
   const tk=key(new Date());const today=events.filter(e=>key(e.start)===tk);
   const left=today.filter(e=>!e.done&&e.start>=now).length;
   const wk=events.filter(e=>e.start>=now&&e.start<now+7*DAY&&!e.done).length;
   $('#hero').innerHTML=nx?`<small>Prossimo impegno</small><div class="t">${esc(nx.title)}</div><span class="when">${nx.start<=now?'In corso':fmtIn(nx.start-now)} · ${hm(nx.start)}</span>
-  <div class="stats"><div class="stat"><b>${left}</b>ancora oggi</div><div class="stat"><b>${wk}</b>nei prossimi 7 gg</div><div class="stat"><b>${events.filter(e=>!e.done&&e.start<now&&e.start>now-7*DAY).length}</b>da chiudere</div></div>`
+  <div class="stats"><div class="stat"><b>${left}</b>ancora oggi</div><div class="stat"><b>${wk}</b>nei prossimi 7 gg</div><div class="stat"><b>${events.filter(e=>!e.done&&!e.allDay&&e.start<now&&e.start>now-7*DAY).length}</b>da chiudere</div></div>`
   :`<small>Prossimo impegno</small><div class="t">Nessun impegno in vista</div><span class="when">Agenda libera ✨</span>`;
 }
 
@@ -422,7 +437,7 @@ $('#fSave').onclick=()=>{
   const data={title,start,dur:+$('#fDur').value,cat:fCat,rem:fRem.slice(),insist:$('#fIns').checked,note:$('#fNote').value.trim()};
   if(editing){
     const timeChanged=editing.start!==start||JSON.stringify(editing.rem)!==JSON.stringify(data.rem);
-    Object.assign(editing,data);if(timeChanged){editing.fired={};editing.nextAlert=null;editing.ack=false;editing.done=false}
+    Object.assign(editing,data);if(editing.allDay&&(h||mi))editing.allDay=false;if(timeChanged){editing.fired={};editing.nextAlert=null;editing.ack=false;editing.done=false}
   }else events.push({id:uid(),done:false,fired:{},nextAlert:null,ack:false,...data});
   save();closeForm();render();toast('Salvato ✓');checkAlerts();
 };
@@ -550,6 +565,254 @@ $('#exIcs').onclick=()=>{
   events.forEach(e=>{ics.push('BEGIN:VEVENT','UID:'+e.id+'@agenda','DTSTAMP:'+f(Date.now()),'DTSTART:'+f(e.start),'DTEND:'+f(e.start+(e.dur||30)*6e4),'SUMMARY:'+e.title.replace(/[,;\n]/g,' '),e.note?'DESCRIPTION:'+e.note.replace(/[,;\n]/g,' '):'');
     (e.rem||[]).forEach(r=>ics.push('BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:'+e.title.replace(/[,;\n]/g,' '),'TRIGGER:-PT'+r+'M','END:VALARM'));ics.push('END:VEVENT')});
   ics.push('END:VCALENDAR');download('agenda.ics','text/calendar',ics.filter(Boolean).join('\r\n'));
+};
+
+/* ---------- Importazione .ics / .csv ---------- */
+/*IMP_PURE_START*/
+const IMP_DURS=[0,15,30,45,60,90,120,180];
+const snapDur=m=>!m||m<=0?0:IMP_DURS.reduce((a,b)=>Math.abs(b-m)<Math.abs(a-m)?b:a);
+const TZMAP={'W. Europe Standard Time':'Europe/Berlin','Central Europe Standard Time':'Europe/Budapest','Central European Standard Time':'Europe/Warsaw','Romance Standard Time':'Europe/Paris','GMT Standard Time':'Europe/London','Greenwich Standard Time':'UTC','UTC':'UTC','GTB Standard Time':'Europe/Bucharest','FLE Standard Time':'Europe/Kiev','Eastern Standard Time':'America/New_York','Central Standard Time':'America/Chicago','Pacific Standard Time':'America/Los_Angeles'};
+function tzOff(ts,tz){
+  const f=new Intl.DateTimeFormat('en-US',{timeZone:tz,hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const p={};f.formatToParts(new Date(ts)).forEach(x=>{p[x.type]=x.value});
+  return Date.UTC(+p.year,+p.month-1,+p.day,+p.hour,+p.minute,+p.second)-ts;
+}
+function resolveTz(tz){
+  if(!tz)return null;
+  tz=String(tz).replace(/^"|"$/g,'').trim();
+  if(TZMAP[tz])return{iana:TZMAP[tz]};
+  try{new Intl.DateTimeFormat('en-US',{timeZone:tz});return{iana:tz}}catch(e){}
+  if(/roma|rome|berlin|amsterdam|parigi|paris|bruxelles|brussels|madrid|vienna|stoccolma|stockholm|berna|bern|varsavia|warsaw|praga|prague|budapest|copenaghen|copenhagen|zagabria|zagreb|belgrado|sarajevo|lubiana|ljubljana/i.test(tz))return{iana:'Europe/Berlin'};
+  const m=tz.match(/UTC\s*([+-])(\d{2}):?(\d{2})/i);
+  if(m)return{fixed:(m[1]==='-'?-1:1)*(+m[2]*60+ +m[3])*6e4};
+  return null;
+}
+function zoned(y,mo,d,h,mi,s,tz){
+  const r=resolveTz(tz);
+  if(!r)return new Date(y,mo-1,d,h,mi,s).getTime();
+  const g=Date.UTC(y,mo-1,d,h,mi,s);
+  if(r.fixed!==undefined)return g-r.fixed;
+  try{const o=tzOff(g,r.iana);let t=g-o;const o2=tzOff(t,r.iana);if(o2!==o)t=g-o2;return t}
+  catch(e){return new Date(y,mo-1,d,h,mi,s).getTime()}
+}
+function parseDT(v,pr){
+  v=(v||'').trim();let m;
+  if(m=v.match(/^(\d{4})(\d{2})(\d{2})$/))return{allDay:true,ts:new Date(+m[1],+m[2]-1,+m[3]).getTime()};
+  if(m=v.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?(Z)?$/i)){
+    const a=[+m[1],+m[2],+m[3],+m[4],+m[5],+(m[6]||0)];
+    if(m[7])return{allDay:false,ts:Date.UTC(a[0],a[1]-1,a[2],a[3],a[4],a[5])};
+    return{allDay:false,ts:zoned(a[0],a[1],a[2],a[3],a[4],a[5],pr&&pr.TZID)};
+  }
+  return null;
+}
+const icsUnescape=s=>String(s||'').replace(/\\n/gi,'\n').replace(/\\([,;\\])/g,'$1');
+function guessCat(t){
+  const low=String(t).toLowerCase();let c='lavoro';
+  if(/\b(cliente|visita|sopralluogo|contratto)\b/.test(low))c='cliente';
+  if(/\b(palestra|cena|pranzo|compleanno|dentista|medico|famiglia|amici|spesa|figli)\b/.test(low))c='personale';
+  if(/\b(importante|urgente|scadenza)\b/.test(low))c='importante';
+  return c;
+}
+function splitProp(line){
+  let q=false,i=0;
+  for(;i<line.length;i++){const c=line[i];if(c==='"')q=!q;else if(c===':'&&!q)break}
+  if(i>=line.length)return null;
+  const head=line.slice(0,i),val=line.slice(i+1);
+  const parts=[];let cur='';q=false;
+  for(const c of head){if(c==='"'){q=!q;cur+=c}else if(c===';'&&!q){parts.push(cur);cur=''}else cur+=c}
+  parts.push(cur);
+  const name=parts.shift().trim().toUpperCase();const pr={};
+  parts.forEach(p=>{const k=p.indexOf('=');if(k>0)pr[p.slice(0,k).toUpperCase()]=p.slice(k+1).replace(/^"|"$/g,'')});
+  return{name,pr,val};
+}
+function parseICS(text){
+  const lines=text.replace(/\r\n[ \t]|\n[ \t]/g,'').split(/\r?\n/);
+  const evs=[];let cur=null,alarm=0;
+  for(const ln of lines){
+    const L=ln.trim();
+    if(L==='BEGIN:VEVENT'){cur={ex:[],props:{}};alarm=0;continue}
+    if(!cur)continue;
+    if(L==='END:VEVENT'){evs.push(cur);cur=null;continue}
+    if(L==='BEGIN:VALARM'){alarm++;continue}
+    if(L==='END:VALARM'){alarm--;continue}
+    if(alarm>0)continue;
+    const p=splitProp(ln);if(!p)continue;
+    if(p.name==='ATTENDEE'){cur.att=true;continue}
+    if(p.name==='EXDATE'){p.val.split(',').forEach(x=>{const d=parseDT(x,p.pr);if(d)cur.ex.push(d.ts)});continue}
+    if(!(p.name in cur.props))cur.props[p.name]=p;
+  }
+  const mk=e=>{
+    const P=e.props;if(!P.DTSTART)return null;
+    if(P.STATUS&&/CANCEL/i.test(P.STATUS.val))return null;
+    const ds=parseDT(P.DTSTART.val,P.DTSTART.pr);if(!ds)return null;
+    let end=null;
+    if(P.DTEND){const de=parseDT(P.DTEND.val,P.DTEND.pr);if(de)end=de.ts}
+    else if(P.DURATION){const m=P.DURATION.val.match(/^P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$/);if(m)end=ds.ts+((+m[1]||0)*7*DAY+(+m[2]||0)*DAY+(+m[3]||0)*36e5+(+m[4]||0)*6e4)}
+    const allDay=ds.allDay||/TRUE/i.test((P['X-MICROSOFT-CDO-ALLDAYEVENT']||{}).val||'');
+    return{uid:P.UID?P.UID.val:null,title:icsUnescape(P.SUMMARY?P.SUMMARY.val:'').trim()||'Evento',start:ds.ts,end,allDay,
+      desc:icsUnescape(P.DESCRIPTION?P.DESCRIPTION.val:''),loc:icsUnescape(P.LOCATION?P.LOCATION.val:''),
+      att:!!e.att||/teams\.microsoft|microsoft teams|teams meeting/i.test((P.DESCRIPTION?P.DESCRIPTION.val:'')+' '+(P.LOCATION?P.LOCATION.val:'')),rule:P.RRULE?P.RRULE.val:null,ex:new Set(e.ex.map(key)),rec:P['RECURRENCE-ID']?parseDT(P['RECURRENCE-ID'].val,P['RECURRENCE-ID'].pr):null};
+  };
+  const list=evs.map(mk).filter(Boolean),masters={};
+  list.forEach(s=>{if(!s.rec&&s.uid)masters[s.uid]=s});
+  list.forEach(s=>{if(s.rec){const M=masters[s.uid];if(M)M.ex.add(key(s.rec.ts));s.rule=null}});
+  return list;
+}
+function parseCSV(text){
+  text=text.replace(/^﻿/,'');
+  const first=text.split(/\r?\n/)[0]||'';
+  const delim=first.split(';').length>first.split(',').length?';':',';
+  const rows=[];let row=[],cur='',q=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(q){if(c==='"'){if(text[i+1]==='"'){cur+='"';i++}else q=false}else cur+=c}
+    else if(c==='"')q=true;
+    else if(c===delim){row.push(cur);cur=''}
+    else if(c==='\n'||c==='\r'){if(c==='\r'&&text[i+1]==='\n')i++;row.push(cur);cur='';rows.push(row);row=[]}
+    else cur+=c;
+  }
+  if(cur!==''||row.length){row.push(cur);rows.push(row)}
+  return rows.filter(r=>r.some(x=>String(x).trim()!==''));
+}
+function csvToSeries(rows){
+  if(rows.length<2)return [];
+  const nrm=h=>String(h).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim();
+  const H=rows[0].map(nrm);
+  const ix=(...ps)=>H.findIndex(h=>ps.some(p=>h.includes(p)));
+  const iSub=ix('subject','oggetto','titolo'),iSD=ix('start date','data di inizio','data inizio'),iST=ix('start time','ora di inizio','ora inizio'),
+    iED=ix('end date','data di fine','data fine'),iET=ix('end time','ora di fine','ora fine'),iAD=ix('all day','tutto il giorno'),
+    iDe=ix('description','descrizione'),iLo=ix('location','localita'),iA1=ix('required attendees','partecipanti necessari'),iA2=ix('optional attendees','partecipanti facoltativi');
+  if(iSub<0||iSD<0)return null;
+  const re=/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/;
+  let dm=0,md=0;
+  rows.slice(1).forEach(r=>{const m=String(r[iSD]||'').trim().match(re);if(m){if(+m[1]>12)dm++;if(+m[2]>12)md++}});
+  const dmFirst=md<=dm;
+  const pd=v=>{v=String(v||'').trim();let m=v.match(/^(\d{4})-(\d{2})-(\d{2})/);if(m)return[+m[1],+m[2],+m[3]];m=v.match(re);if(!m)return null;let y=+m[3];if(y<100)y+=2000;return dmFirst?[y,+m[2],+m[1]]:[y,+m[1],+m[2]]};
+  const pt=v=>{const m=String(v||'').match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp]\.?[Mm]\.?)?/);if(!m)return null;let h=+m[1];const ap=m[3]&&m[3][0].toLowerCase();if(ap==='p'&&h<12)h+=12;if(ap==='a'&&h===12)h=0;return[h,+m[2]]};
+  const out=[];
+  rows.slice(1).forEach(r=>{
+    const d=pd(r[iSD]);if(!d)return;
+    const allDay=iAD>=0&&/^(true|vero|si|sì|yes|1|x)$/i.test(String(r[iAD]||'').trim());
+    const t=iST>=0?pt(r[iST]):null;
+    const start=new Date(d[0],d[1]-1,d[2],allDay||!t?0:t[0],allDay||!t?0:t[1]).getTime();
+    let end=null;const d2=iED>=0?pd(r[iED]):null;
+    if(d2){const t2=iET>=0?pt(r[iET]):null;end=new Date(d2[0],d2[1]-1,d2[2],allDay||!t2?0:t2[0],allDay||!t2?0:t2[1]).getTime()}
+    out.push({uid:null,title:String(r[iSub]||'').trim()||'Evento',start,end,allDay,desc:iDe>=0?String(r[iDe]||''):'',loc:iLo>=0?String(r[iLo]||''):'',att:(iA1>=0&&String(r[iA1]||'').trim()!=='')||(iA2>=0&&String(r[iA2]||'').trim()!=='')||/teams\.microsoft|microsoft teams|teams meeting/i.test(String(r[iDe]||'')+' '+String(r[iLo]||'')),rule:null,ex:new Set(),rec:null});
+  });
+  return out;
+}
+const WDN={SU:0,MO:1,TU:2,WE:3,TH:4,FR:5,SA:6};
+function parseRule(r){const o={};r.split(';').forEach(p=>{const i=p.indexOf('=');if(i>0)o[p.slice(0,i).toUpperCase()]=p.slice(i+1)});return o}
+function dayList(y,m,r,b){
+  const dim=new Date(y,m+1,0).getDate();let days=[];
+  if(r.BYDAY){
+    r.BYDAY.split(',').forEach(tk=>{
+      const mm=tk.match(/^([+-]?\d+)?([A-Z]{2})$/);if(!mm)return;
+      const wd=WDN[mm[2]],ord=mm[1]?+mm[1]:0,all=[];
+      for(let d=1;d<=dim;d++)if(new Date(y,m,d).getDay()===wd)all.push(d);
+      if(ord>0){if(all[ord-1])days.push(all[ord-1])}
+      else if(ord<0){if(all[all.length+ord])days.push(all[all.length+ord])}
+      else days=days.concat(all);
+    });
+  }else if(r.BYMONTHDAY){
+    r.BYMONTHDAY.split(',').forEach(x=>{let d=+x;if(d<0)d=dim+1+d;if(d>=1&&d<=dim)days.push(d)});
+  }else if(b.getDate()<=dim)days.push(b.getDate());
+  return [...new Set(days)].sort((p,q)=>p-q);
+}
+function expand(s,lo,hi){
+  const out=[];
+  if(!s.rule){if(s.start>=lo)out.push(s.start);return out}
+  const r=parseRule(s.rule),iv=Math.max(1,+r.INTERVAL||1),cnt=r.COUNT?+r.COUNT:Infinity;
+  let until=Infinity;
+  if(r.UNTIL){const u=parseDT(r.UNTIL,{});if(u)until=u.allDay?u.ts+DAY-1:u.ts}
+  const b=new Date(s.start),H=b.getHours(),Mi=b.getMinutes(),Sc=b.getSeconds();
+  const mk=(y,m,d)=>new Date(y,m,d,H,Mi,Sc).getTime();
+  let n=0,guard=0,stop=false;
+  const emit=ts=>{
+    if(ts<s.start)return;
+    if(ts>until||ts>hi||n>=cnt){stop=true;return}
+    n++;
+    if(ts>=lo&&!s.ex.has(key(ts)))out.push(ts);
+  };
+  const F=r.FREQ;
+  if(F==='DAILY'){
+    for(let k=0;!stop&&guard<30000;k++,guard++)emit(mk(b.getFullYear(),b.getMonth(),b.getDate()+k*iv));
+  }else if(F==='WEEKLY'){
+    const days=(r.BYDAY?r.BYDAY.split(',').map(x=>WDN[x.slice(-2)]):[b.getDay()]).filter(x=>x!==undefined).sort((x,y)=>((x+6)%7)-((y+6)%7));
+    const wk0=b.getDate()-((b.getDay()+6)%7);
+    for(let k=0;!stop&&guard<30000;k++,guard++){for(const wd of days){if(stop)break;emit(mk(b.getFullYear(),b.getMonth(),wk0+k*7*iv+((wd+6)%7)))}}
+  }else if(F==='MONTHLY'){
+    for(let k=0;!stop&&guard<5000;k++,guard++){const t=b.getMonth()+k*iv,y=b.getFullYear()+Math.floor(t/12),m=((t%12)+12)%12;for(const d of dayList(y,m,r,b)){if(stop)break;emit(mk(y,m,d))}}
+  }else if(F==='YEARLY'){
+    const ms=r.BYMONTH?r.BYMONTH.split(',').map(x=>+x-1).sort((x,y)=>x-y):[b.getMonth()];
+    for(let k=0;!stop&&guard<500;k++,guard++){const y=b.getFullYear()+k*iv;for(const m of ms){if(stop)break;for(const d of dayList(y,m,r,b)){if(stop)break;emit(mk(y,m,d))}}}
+  }else if(s.start>=lo)out.push(s.start);
+  return out;
+}
+function buildCands(series,lo,hi){
+  const out=[];
+  series.forEach(s=>{
+    const dur=s.allDay?0:snapDur(s.end?Math.round((s.end-s.start)/6e4):0);
+    const loc=/teams/i.test(s.loc||'')?'':s.loc;
+    const note=[loc&&('Luogo: '+loc),s.desc&&s.desc.replace(/\s+/g,' ').trim()].filter(Boolean).join(' · ').slice(0,220);
+    const cat=guessCat(s.title);
+    const push=ts=>out.push({title:s.title,start:ts,dur,allDay:!!s.allDay,note,cat,att:!!s.att});
+    if(s.allDay&&!s.rule&&s.end&&s.end-s.start>1.5*DAY){
+      const n=Math.min(31,Math.round((s.end-s.start)/DAY));
+      for(let i=0;i<n;i++){const d=new Date(s.start);d.setDate(d.getDate()+i);if(d.getTime()>=lo)push(d.getTime())}
+    }else expand(s,lo,hi).forEach(push);
+  });
+  out.sort((a,b)=>a.start-b.start);
+  return out;
+}
+/*IMP_PURE_END*/
+let impSeries=[],impNew=[];
+function impExisting(){const s=new Set();events.forEach(e=>s.add((e.title||'').toLowerCase()+'|'+e.start));return s}
+function impRefresh(){
+  const past=$('#impPast').checked;
+  const lo=past?0:sod(new Date()).getTime(),hi=Date.now()+400*DAY;
+  let c=buildCands(impSeries,lo,hi),cut=false;
+  if($('#impNoInv').checked)c=c.filter(x=>!x.att);
+  if(c.length>6000){const now=Date.now();c=c.sort((a,b)=>Math.abs(a.start-now)-Math.abs(b.start-now)).slice(0,6000).sort((a,b)=>a.start-b.start);cut=true}
+  const ex=impExisting();
+  impNew=c.filter(x=>!ex.has(x.title.toLowerCase()+'|'+x.start));
+  const generic=impNew.length&&impNew.filter(x=>/^(occupato|busy|impegnato|indisponibile|non disponibile)$/i.test(x.title)).length/impNew.length>.6;
+  $('#impSum').innerHTML='Trovati <b>'+c.length+'</b> eventi'+(past?'':' da oggi in poi')+': <b>'+impNew.length+'</b> nuovi, '+(c.length-impNew.length)+' già presenti.'
+    +(cut?'<br>Sono molti: importo i 6000 più vicini a oggi.':'')
+    +(generic?'<br><b style="color:var(--importante)">Attenzione:</b> i titoli sembrano generici ("Occupato"). Rifai il salvataggio in Outlook con Dettagli completi.':'');
+  $('#impList').innerHTML=impNew.slice(0,6).map(x=>{const d=new Date(x.start);return '<div style="padding:3px 0">'+GIORNI[d.getDay()].slice(0,3)+' '+d.getDate()+' '+MESI[d.getMonth()].slice(0,3)+' · '+(x.allDay?'tutto il giorno':hm(x.start))+' · '+esc(x.title)+'</div>'}).join('')||'Niente da importare.';
+  $('#impOk').textContent=impNew.length?'Importa '+impNew.length:'Chiudi';
+}
+async function impLoad(file){
+  try{
+    const buf=await file.arrayBuffer();let text;
+    try{text=new TextDecoder('utf-8',{fatal:true}).decode(buf)}catch(e){text=new TextDecoder('windows-1252').decode(buf)}
+    text=text.replace(/^﻿/,'');
+    let series;
+    if(/BEGIN:VCALENDAR/i.test(text))series=parseICS(text);
+    else{series=csvToSeries(parseCSV(text));if(series===null){toast('Colonne non riconosciute nel CSV');return}}
+    if(!series.length){toast('Nessun evento trovato nel file');return}
+    impSeries=series;$('#impPast').checked=false;$('#impNotes').checked=false;$('#impNoInv').checked=false;impRefresh();
+    $('#setBg').classList.remove('on');$('#impBg').classList.add('on');
+  }catch(e){toast('Impossibile leggere il file')}
+}
+$('#imEv').onclick=()=>$('#imEvFile').click();
+$('#imEvFile').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)impLoad(f)};
+$('#impPast').onchange=impRefresh;$('#impNotes').onchange=impRefresh;$('#impNoInv').onchange=impRefresh;
+$('#impNo').onclick=()=>$('#impBg').classList.remove('on');
+$('#impBg').onclick=e=>{if(e.target.id==='impBg')$('#impBg').classList.remove('on')};
+$('#impOk').onclick=()=>{
+  if(!impNew.length){$('#impBg').classList.remove('on');return}
+  const now=Date.now(),bk=events.slice();let n=0;
+  const add=impNew.map(x=>{
+    const rem=x.allDay?[]:settings.defRem.slice(),fired={};
+    rem.forEach(r=>{if(x.start-r*6e4<=now)fired[r]=true});
+    return{id:uid()+(n++).toString(36),title:x.title,start:x.start,dur:x.dur,cat:x.cat,rem,insist:false,note:$('#impNotes').checked?x.note:'',
+      done:x.start+(x.allDay?DAY:(x.dur||0)*6e4)<now,fired,nextAlert:null,ack:false,allDay:x.allDay||undefined};
+  });
+  events=events.concat(add);
+  try{localStorage.setItem('ag_ev',JSON.stringify(events))}catch(e){events=bk;toast('Memoria piena: importa meno eventi');return}
+  save();$('#impBg').classList.remove('on');render();toast('Importati '+add.length+' eventi ✓');
 };
 
 /* ---------- Azioni dalle notifiche ---------- */
