@@ -1,5 +1,5 @@
 const CACHE='agenda-v1';
-const FILES=['./','./calendario_agenda_vocale.html','./manifest.json'];
+const FILES=['./','./index.html','./manifest.json'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES).catch(()=>{})).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(clients.claim())});
 self.addEventListener('fetch',e=>{
@@ -11,6 +11,6 @@ self.addEventListener('notificationclick',e=>{
   const d=e.notification.data||{};const act=e.action||'open';
   e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(list=>{
     if(list.length){list[0].postMessage({act,id:d.id});return list[0].focus()}
-    return clients.openWindow('./calendario_agenda_vocale.html?act='+act+'&id='+encodeURIComponent(d.id||''));
+    return clients.openWindow('./index.html?act='+act+'&id='+encodeURIComponent(d.id||''));
   }));
 });
