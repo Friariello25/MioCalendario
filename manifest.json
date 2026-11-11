@@ -1,0 +1,18 @@
+{
+  "name": "La mia agenda",
+  "short_name": "Agenda",
+  "start_url": "./calendario_agenda_vocale.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f4fb",
+  "theme_color": "#4338ca",
+  "lang": "it",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='110' fill='%234f46e5'/%3E%3Ctext x='256' y='350' font-size='280' text-anchor='middle'%3E%F0%9F%93%85%3C/text%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
