@@ -130,6 +130,10 @@ header{background:var(--navy);color:#fff;padding:calc(14px + env(safe-area-inset
 .toast.on{opacity:1}
 .empty{text-align:center;color:var(--mute);padding:40px 20px}
 .empty .e{font-size:2.4rem}
+.dg{background:var(--bg);border-radius:12px;padding:8px 10px;margin-bottom:8px}
+.dg label{display:flex;gap:10px;align-items:flex-start;padding:5px 0;font-size:.88rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--ink);margin:0}
+.dg input{width:20px;height:20px;flex:none;margin-top:2px}
+.dgh{font-size:.75rem;color:var(--mute);font-weight:700;text-transform:capitalize}
 </style>
 </head>
 <body>
@@ -207,6 +211,7 @@ header{background:var(--navy);color:#fff;padding:calc(14px + env(safe-area-inset
     <div class="f"><label>Dati</label>
       <div class="btns" style="margin-top:0;flex-wrap:wrap">
         <button class="btn s" id="imEv">Importa eventi</button>
+        <button class="btn s" id="findDup">Trova doppioni</button>
         <button class="btn s" id="exIcs">Esporta .ics</button>
         <button class="btn s" id="exJson">Backup</button>
         <button class="btn s" id="imJson">Ripristina</button>
@@ -226,8 +231,19 @@ header{background:var(--navy);color:#fff;padding:calc(14px + env(safe-area-inset
     <div class="f"><label class="sw"><input type="checkbox" id="impPast"> Includi anche gli eventi passati</label></div>
     <div class="f"><label class="sw"><input type="checkbox" id="impNotes"> Includi note e descrizioni</label></div>
     <div class="f"><label class="sw"><input type="checkbox" id="impNoInv"> Escludi le riunioni con invitati</label></div>
+    <div class="f"><label class="sw"><input type="checkbox" id="impSkipDup" checked> Salta i possibili doppioni</label></div>
     <div class="f"><label>Anteprima</label><div id="impList" style="font-size:.85rem;color:var(--mute)"></div></div>
     <div class="btns"><button class="btn s" id="impNo">Annulla</button><button class="btn p" id="impOk">Importa</button></div>
+  </div>
+</div>
+
+<!-- Trova doppioni -->
+<div class="sheet-bg" id="dupBg">
+  <div class="sheet">
+    <h2>Trova doppioni</h2>
+    <div id="dupSum" style="font-size:.92rem;margin-bottom:12px"></div>
+    <div id="dupList"></div>
+    <div class="btns"><button class="btn s" id="dupNo">Annulla</button><button class="btn p" id="dupOk">Chiudi</button></div>
   </div>
 </div>
 
@@ -766,7 +782,78 @@ function buildCands(series,lo,hi){
   return out;
 }
 /*IMP_PURE_END*/
-let impSeries=[],impNew=[];
+let impSeries=[],impNew=[],impDups=[],dupGroups=[];
+/*DUP_START*/
+function nrm(t){return String(t||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim()}
+function simTitle(a,b){
+  const x=nrm(a),y=nrm(b);if(!x||!y)return false;if(x===y)return true;
+  const sh=x.length<=y.length?x:y,lg=sh===x?y:x;
+  if(sh.length>=4&&(' '+lg+' ').includes(' '+sh+' '))return true;
+  const tx=x.split(' '),ty=y.split(' '),sy=new Set(ty);
+  const common=tx.filter(w=>sy.has(w)).length;
+  return common/new Set(tx.concat(ty)).size>=0.6;
+}
+function isDup(a,b){
+  if(key(a.start)!==key(b.start))return false;
+  if(!a.allDay&&!b.allDay&&Math.abs(a.start-b.start)>36e5)return false;
+  return simTitle(a.title,b.title);
+}
+function markDups(list){
+  const byDay={};
+  events.forEach(e=>{(byDay[key(e.start)]??=[]).push({title:e.title,start:e.start,allDay:!!e.allDay})});
+  const out=[];
+  list.forEach(x=>{
+    const k=key(x.start),arr=byDay[k]||(byDay[k]=[]);
+    const m=arr.find(y=>isDup(x,y));
+    if(m){x.dupOf=m.title+' '+(m.allDay?'(tutto il giorno)':hm(m.start));out.push(x)}
+    else arr.push({title:x.title,start:x.start,allDay:!!x.allDay});
+  });
+  return out;
+}
+function dupScore(e){return (e.note?String(e.note).length:0)+(e.dur?50:0)+(e.title||'').length}
+function findDups(){
+  const byDay={};events.forEach(e=>{(byDay[key(e.start)]??=[]).push(e)});
+  const groups=[];
+  Object.keys(byDay).forEach(k=>{
+    const a=byDay[k].slice().sort((p,q)=>p.start-q.start);if(a.length<2)return;
+    const par=a.map((_,i)=>i);
+    const f=i=>{while(par[i]!==i){par[i]=par[par[i]];i=par[i]}return i};
+    for(let i=0;i<a.length;i++)for(let j=i+1;j<a.length;j++)if(isDup(a[i],a[j])){const ri=f(i),rj=f(j);if(ri!==rj)par[rj]=ri}
+    const m={};a.forEach((e,i)=>{(m[f(i)]??=[]).push(e)});
+    Object.keys(m).forEach(r=>{if(m[r].length>1)groups.push(m[r])});
+  });
+  groups.sort((p,q)=>p[0].start-q[0].start);
+  return groups;
+}
+/*DUP_END*/
+function dupCount(){const n=document.querySelectorAll('#dupList input:checked').length;$('#dupOk').textContent=n?'Elimina '+n:'Chiudi'}
+function dupRender(){
+  const keepIdx=g=>{let b=0;g.forEach((e,i)=>{if(dupScore(e)>dupScore(g[b]))b=i});return b};
+  const shown=dupGroups.slice(0,150);
+  $('#dupSum').innerHTML=dupGroups.length
+    ?'Trovati <b>'+dupGroups.length+'</b> gruppi di possibili doppioni'+(dupGroups.length>shown.length?' (mostro i primi '+shown.length+')':'')+'. In ogni gruppo è già segnato da eliminare tutto tranne l\'evento più completo: togli la spunta a quelli che vuoi tenere.'
+    :'Nessun doppione trovato.';
+  $('#dupList').innerHTML=shown.map((g,gi)=>{
+    const kp=keepIdx(g),d=new Date(g[0].start);
+    return '<div class="dg"><div class="dgh">'+GIORNI[d.getDay()]+' '+d.getDate()+' '+MESI[d.getMonth()]+'</div>'
+      +g.map((e,i)=>'<label><input type="checkbox" data-del="'+e.id+'"'+(i===kp?'':' checked')+'><span><b>'+(e.allDay?'Tutto il giorno':hm(e.start))+'</b> · '+esc(e.title)+'<br><small style="color:var(--mute)">'+CATS[e.cat]+(e.dur?' · '+e.dur+' min':'')+(e.note?' · con note':'')+'</small></span></label>').join('')+'</div>';
+  }).join('');
+  dupCount();
+}
+$('#findDup').onclick=()=>{dupGroups=findDups();dupRender();$('#setBg').classList.remove('on');$('#dupBg').classList.add('on')};
+$('#dupList').addEventListener('change',dupCount);
+$('#dupNo').onclick=()=>$('#dupBg').classList.remove('on');
+$('#dupBg').onclick=e=>{if(e.target.id==='dupBg')$('#dupBg').classList.remove('on')};
+$('#dupOk').onclick=()=>{
+  const boxes=[...document.querySelectorAll('#dupList input:checked')];
+  if(!boxes.length){$('#dupBg').classList.remove('on');return}
+  const sel=new Set(boxes.map(b=>b.dataset.del));
+  if(dupGroups.slice(0,150).some(g=>g.every(e=>sel.has(e.id)))){toast('Lascia almeno un evento per gruppo');return}
+  const bk=events.slice();
+  events=events.filter(e=>!sel.has(e.id));
+  try{localStorage.setItem('ag_ev',JSON.stringify(events))}catch(x){events=bk;toast('Errore di salvataggio');return}
+  save();$('#dupBg').classList.remove('on');render();toast('Eliminati '+sel.size+' eventi ✓');
+};
 function impExisting(){const s=new Set();events.forEach(e=>s.add((e.title||'').toLowerCase()+'|'+e.start));return s}
 function impRefresh(){
   const past=$('#impPast').checked;
@@ -775,12 +862,16 @@ function impRefresh(){
   if($('#impNoInv').checked)c=c.filter(x=>!x.att);
   if(c.length>6000){const now=Date.now();c=c.sort((a,b)=>Math.abs(a.start-now)-Math.abs(b.start-now)).slice(0,6000).sort((a,b)=>a.start-b.start);cut=true}
   const ex=impExisting();
-  impNew=c.filter(x=>!ex.has(x.title.toLowerCase()+'|'+x.start));
+  const fresh=c.filter(x=>!ex.has(x.title.toLowerCase()+'|'+x.start));
+  const skipDup=$('#impSkipDup').checked;
+  impDups=markDups(fresh);
+  impNew=skipDup?fresh.filter(x=>!x.dupOf):fresh;
   const generic=impNew.length&&impNew.filter(x=>/^(occupato|busy|impegnato|indisponibile|non disponibile)$/i.test(x.title)).length/impNew.length>.6;
-  $('#impSum').innerHTML='Trovati <b>'+c.length+'</b> eventi'+(past?'':' da oggi in poi')+': <b>'+impNew.length+'</b> nuovi, '+(c.length-impNew.length)+' già presenti.'
+  $('#impSum').innerHTML='Trovati <b>'+c.length+'</b> eventi'+(past?'':' da oggi in poi')+': <b>'+impNew.length+'</b> nuovi, '+(c.length-fresh.length)+' già presenti.'+(impDups.length?'<br><b>'+impDups.length+'</b> possibili doppioni'+(skipDup?' saltati':' inclusi')+' (titolo simile, stesso giorno, orario vicino).':'')
     +(cut?'<br>Sono molti: importo i 6000 più vicini a oggi.':'')
     +(generic?'<br><b style="color:var(--importante)">Attenzione:</b> i titoli sembrano generici ("Occupato"). Rifai il salvataggio in Outlook con Dettagli completi.':'');
   $('#impList').innerHTML=impNew.slice(0,6).map(x=>{const d=new Date(x.start);return '<div style="padding:3px 0">'+GIORNI[d.getDay()].slice(0,3)+' '+d.getDate()+' '+MESI[d.getMonth()].slice(0,3)+' · '+(x.allDay?'tutto il giorno':hm(x.start))+' · '+esc(x.title)+'</div>'}).join('')||'Niente da importare.';
+  if(impDups.length&&skipDup)$('#impList').innerHTML+='<div style="margin-top:8px;font-weight:700">Saltati perché simili a eventi già presenti:</div>'+impDups.slice(0,5).map(x=>'<div style="padding:3px 0">'+esc(x.title)+' · '+hm(x.start)+' ≈ '+esc(x.dupOf)+'</div>').join('');
   $('#impOk').textContent=impNew.length?'Importa '+impNew.length:'Chiudi';
 }
 async function impLoad(file){
@@ -792,13 +883,13 @@ async function impLoad(file){
     if(/BEGIN:VCALENDAR/i.test(text))series=parseICS(text);
     else{series=csvToSeries(parseCSV(text));if(series===null){toast('Colonne non riconosciute nel CSV');return}}
     if(!series.length){toast('Nessun evento trovato nel file');return}
-    impSeries=series;$('#impPast').checked=false;$('#impNotes').checked=false;$('#impNoInv').checked=false;impRefresh();
+    impSeries=series;$('#impPast').checked=false;$('#impNotes').checked=false;$('#impNoInv').checked=false;$('#impSkipDup').checked=true;impRefresh();
     $('#setBg').classList.remove('on');$('#impBg').classList.add('on');
   }catch(e){toast('Impossibile leggere il file')}
 }
 $('#imEv').onclick=()=>$('#imEvFile').click();
 $('#imEvFile').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)impLoad(f)};
-$('#impPast').onchange=impRefresh;$('#impNotes').onchange=impRefresh;$('#impNoInv').onchange=impRefresh;
+$('#impPast').onchange=impRefresh;$('#impNotes').onchange=impRefresh;$('#impNoInv').onchange=impRefresh;$('#impSkipDup').onchange=impRefresh;
 $('#impNo').onclick=()=>$('#impBg').classList.remove('on');
 $('#impBg').onclick=e=>{if(e.target.id==='impBg')$('#impBg').classList.remove('on')};
 $('#impOk').onclick=()=>{
